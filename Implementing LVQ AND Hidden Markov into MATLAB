@@ -1,0 +1,142 @@
+data_native = readmatrix('s01_ex05.txt');
+data_resting = readmatrix('s01_ex01_s02 (Filtered).txt');
+
+eeg_native = data_native(:, 2:5);
+eeg_resting = data_resting(:, 2:5);
+
+labels_native = ones(size(eeg_native, 1), 1);
+labels_resting = zeros(size(eeg_resting, 1), 1);
+
+inputs = [eeg_native; eeg_resting];
+targets = [labels_native; labels_resting];
+
+inputs = normalize(inputs, 'range');
+
+[coeff, inputs_pca, ~, ~, explained] = pca(inputs);
+cumulative_explained = cumsum(explained);
+numComponents = find(cumulative_explained >= 95, 1); % Retain 95% variance
+inputs_reduced = inputs_pca(:, 1:numComponents);
+
+num_samples_per_class = min(sum(targets == 0), sum(targets == 1));
+balanced_indices = [randsample(find(targets == 0), num_samples_per_class); ...
+                    randsample(find(targets == 1), num_samples_per_class)];
+inputs_balanced = inputs_reduced(balanced_indices, :);
+targets_balanced = targets(balanced_indices);
+
+cv = cvpartition(targets_balanced, 'HoldOut', 0.3);
+train_inputs = inputs_balanced(training(cv), :);
+train_targets = targets_balanced(training(cv));
+test_inputs = inputs_balanced(test(cv), :);
+test_targets = targets_balanced(test(cv));
+
+numClasses = 2; % Two classes: native music and resting state
+numPrototypes = 5; % Increase number of prototypes per class
+
+net = lvqnet(numClasses * numPrototypes);
+
+net.trainParam.epochs = 100; % Increase epochs for better training
+
+% Train the LVQ Network
+[net, tr] = train(net, train_inputs', train_targets');
+
+% Test the network (evaluate the network to generate predictions)
+outputs = net(test_inputs');
+
+% Convert network outputs to class labels
+[~, predictedLabels] = max(outputs, [], 1);
+
+% Evaluate Performance
+accuracy = sum(predictedLabels' == test_targets) / length(test_targets);
+fprintf('Accuracy: %.2f%%\n', accuracy * 100);
+
+% Confusion Matrix (summarize the correct and incorrect predictions in a tabular format)
+confMat = confusionmat(test_targets, predictedLabels');
+confusionchart(confMat);
+
+% Calculate Precision, Recall, and F1-Score
+precision = diag(confMat) ./ sum(confMat, 2);
+recall = diag(confMat) ./ sum(confMat, 1)';
+f1score = 2 * (precision .* recall) ./ (precision + recall);
+
+% Display Metrics
+fprintf('Precision: %.2f\n', nanmean(precision));
+fprintf('Recall: %.2f\n', nanmean(recall));
+fprintf('F1-Score: %.2f\n', nanmean(f1score));
+
+
+BELOW IS TO IMPLEMENT HIDDEN MARKOV!
+
+% Normalize data 
+eeg_native = normalize(eeg_native);
+eeg_resting = normalize(eeg_resting);
+
+% Split data into training and test sets (80/20 split), ensuring both classes are represented
+numSamples = size(EEGData, 1);
+numTrain = round(0.8 * numSamples);
+
+% Ensure stratified split
+cv = cvpartition(labels, 'HoldOut', 0.2);
+trainData = EEGData(cv.training, :);
+trainLabels = labels(cv.training);
+
+testData = EEGData(cv.test, :);
+testLabels = labels(cv.test);
+
+% Discretize the continuous data using k-means clustering
+numClusters = 4; % Number of discrete states
+[trainDataDiscretized, C] = kmeans(trainData, numClusters, 'MaxIter', 100);
+testDataDiscretized = knnsearch(C, testData);
+
+% Train HMM
+% Define HMM parameters
+numStates = 2; % Number of hidden states
+
+% Initialize HMM parameters more carefully
+transMat = [0.7, 0.3; 0.3, 0.7];
+emissionMat = rand(numStates, numClusters);
+emissionMat = emissionMat ./ sum(emissionMat, 2);
+initStateProb = [0.5, 0.5];
+
+% Convert data to sequence format expected by hmmtrain
+trainSequences = mat2cell(trainDataDiscretized, ones(size(trainDataDiscretized, 1), 1), size(trainDataDiscretized, 2));
+
+% Train HMM using the training data
+numEpochs = 100;
+for epoch = 1:numEpochs
+    [transMat, emissionMat, initStateProb] = hmmtrain(trainSequences, transMat, emissionMat, 'MaxIter', 10, 'Verbose', true);
+end
+
+% Classification using Viterbi algorithm (used to find the most mikely sequence of hidden states)
+predictedLabels = zeros(size(testLabels));
+for i = 1:length(testLabels)
+    seq = testDataDiscretized(i, :)';
+    % Get the most likely sequence of states
+    states = hmmviterbi(seq, transMat, emissionMat);
+    % Assign label based on most likely state (assuming state 1 is native music and state 2 is resting state)
+    if mode(states) == 1
+        predictedLabels(i) = 1;
+    else
+        predictedLabels(i) = 0;
+    end
+end
+
+% Evaluate performance based on predefined metrics
+accuracy = sum(predictedLabels == testLabels) / length(testLabels);
+precision = sum((predictedLabels == 1) & (testLabels == 1)) / sum(predictedLabels == 1);
+recall = sum((predictedLabels == 1) & (testLabels == 1)) / sum(testLabels == 1);
+f1_score = 2 * (precision * recall) / (precision + recall);
+
+fprintf('Accuracy: %.2f%%\n', accuracy * 100);
+fprintf('Precision: %.2f\n', precision);
+fprintf('Recall: %.2f\n', recall);
+fprintf('F1-Score: %.2f\n', f1_score);
+
+% Handle edge cases when precision is NaN (no positive predictions)
+if isnan(precision)
+    fprintf('No positive predictions, precision is undefined.\n');
+end
+
+% Handle edge cases when F1-Score is NaN (both precision and recall are zero)
+if isnan(f1_score)
+    fprintf('F1-Score is undefined due to precision and/or recall being zero.\n');
+end
