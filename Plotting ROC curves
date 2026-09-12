@@ -1,0 +1,86 @@
+net = lvqnet(numClasses * numPrototypes);
+
+net.trainParam.epochs = 25; % Set epochs to 25
+
+[net, tr] = train(net, train_inputs', train_targets');
+
+outputs = net(test_inputs');
+
+scores = outputs;
+
+[fpr, tpr, ~, auc] = perfcurve(test_targets, scores, 1);
+
+figure;
+plot(fpr, tpr, 'b-', 'LineWidth', 2);
+xlabel('False Positive Rate');
+ylabel('True Positive Rate');
+title(['ROC Curve (AUC = ' num2str(auc) ')']);
+grid on;
+
+predictedLabels = scores > 0.5;
+
+accuracy = sum(predictedLabels' == test_targets) / length(test_targets);
+fprintf('Accuracy: %.2f%%\n', accuracy * 100);
+
+confMat = confusionmat(test_targets, predictedLabels');
+confusionchart(confMat);
+
+precision = diag(confMat) ./ sum(confMat, 2);
+recall = diag(confMat) ./ sum(confMat, 1)';
+f1score = 2 * (precision .* recall) ./ (precision + recall);
+
+fprintf('Precision: %.2f\n', nanmean(precision));
+fprintf('Recall: %.2f\n', nanmean(recall));
+fprintf('F1-Score: %.2f\n', nanmean(f1score));
+
+BELOW IS TO PLOT ROC CURVE FOR HMM:
+
+k = 5; % Number of folds
+cv = cvpartition(targets_balanced, 'KFold', k);
+
+fpr_all = [];
+tpr_all = [];
+auc_all = zeros(k, 1);
+
+for i = 1:k
+
+    train_indices = training(cv, i);
+    test_indices = test(cv, i);
+    
+    train_inputs = inputs_balanced(train_indices, :);
+    train_targets = targets_balanced(train_indices);
+    test_inputs = inputs_balanced(test_indices, :);
+    test_targets = targets_balanced(test_indices);
+
+    numStates = 2; % Reduce number of hidden states
+    numEmissions = numComponents; % Number of emission symbols
+
+    options = statset('MaxIter', 100, 'Display', 'off'); % Increase iterations for convergence
+    gmm_native = fitgmdist(train_inputs(train_targets == 1, :), numStates, ...
+                           'CovarianceType', 'diagonal', ...
+                           'Options', options, ...
+                           'RegularizationValue', 0.01);
+    gmm_resting = fitgmdist(train_inputs(train_targets == 0, :), numStates, ...
+                            'CovarianceType', 'diagonal', ...
+                            'Options', options, ...
+                            'RegularizationValue', 0.01);
+
+    logLikelihood_native = log(pdf(gmm_native, test_inputs));
+    logLikelihood_resting = log(pdf(gmm_resting, test_inputs));
+
+    scores = logLikelihood_native - logLikelihood_resting;
+
+    [fpr, tpr, ~, auc] = perfcurve(test_targets, scores, 1);
+    fpr_all = [fpr_all; fpr];
+    tpr_all = [tpr_all; tpr];
+    auc_all(i) = auc;
+end
+
+figure;
+plot(fpr_all, tpr_all, 'b-', 'LineWidth', 2);
+xlabel('False Positive Rate');
+ylabel('True Positive Rate');
+title(['ROC Curve (Average AUC = ' num2str(mean(auc_all)) ')']);
+grid on;
+
+fprintf('Average AUC: %.4f\n', mean(auc_all));
