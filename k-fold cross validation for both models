@@ -1,0 +1,142 @@
+k = 5;
+
+accuracies = zeros(k, 1);
+precisions = zeros(k, 1);
+recalls = zeros(k, 1);
+f1scores = zeros(k, 1);
+
+cv = cvpartition(targets_balanced, 'KFold', k);
+for i = 1:k
+    
+    train_indices = training(cv, i);
+    test_indices = test(cv, i);
+  
+    train_inputs = inputs_balanced(train_indices, :);
+    train_targets = targets_balanced(train_indices);
+    test_inputs = inputs_balanced(test_indices, :);
+    test_targets = targets_balanced(test_indices);
+    
+    net = lvqnet(numClasses * numPrototypes);
+    
+    net.trainParam.epochs = 50; % Set epochs to 50
+    
+    [net, ~] = train(net, train_inputs', train_targets');
+    
+    outputs = net(test_inputs');
+    
+    [~, predictedLabels] = max(outputs, [], 1);
+    
+    accuracies(i) = sum(predictedLabels' == test_targets) / length(test_targets);
+    
+    confMat = confusionmat(test_targets, predictedLabels');
+    
+    precision = diag(confMat) ./ sum(confMat, 2);
+    recall = diag(confMat) ./ sum(confMat, 1)';
+    f1score = 2 * (precision .* recall) ./ (precision + recall);
+    
+    precisions(i) = nanmean(precision);
+    recalls(i) = nanmean(recall);
+    f1scores(i) = nanmean(f1score);
+    
+    fprintf('Fold %d Results:\n', i);
+    fprintf('Accuracy: %.2f%%\n', accuracies(i) * 100);
+    fprintf('Precision: %.2f\n', precisions(i));
+    fprintf('Recall: %.2f\n', recalls(i));
+    fprintf('F1-Score: %.2f\n', f1scores(i));
+    fprintf('\n');
+end
+
+fprintf('K-Fold Cross-Validation Results:\n');
+for i = 1:k
+    fprintf('Fold %d:\n', i);
+    fprintf('Accuracy: %.2f%%\n', accuracies(i) * 100);
+    fprintf('Precision: %.2f\n', precisions(i));
+    fprintf('Recall: %.2f\n', recalls(i));
+    fprintf('F1-Score: %.2f\n', f1scores(i));
+    fprintf('\n');
+end
+
+fprintf('Average Accuracy: %.2f%%\n', mean(accuracies) * 100);
+fprintf('Average Precision: %.2f\n', mean(precisions));
+fprintf('Average Recall: %.2f\n', mean(recalls));
+fprintf('Average F1-Score: %.2f\n', mean(f1scores));
+
+BELOW IS FOR HIDDEN MARKOV:
+
+k = 5;
+
+accuracies = zeros(k, 1);
+precisions = zeros(k, 1);
+recalls = zeros(k, 1);
+f1scores = zeros(k, 1);
+
+cv = cvpartition(targets_balanced, 'KFold', k);
+for i = 1:k
+    % Training and testing indices for this fold
+    train_indices = training(cv, i);
+    test_indices = test(cv, i);
+
+    trainData = inputs_balanced(train_indices, :);
+    trainLabels = targets_balanced(train_indices);
+    testData = inputs_balanced(test_indices, :);
+    testLabels = targets_balanced(test_indices);
+
+    numClusters = 20; % Increase number of discrete states
+    maxIter = 500; % Increase maximum number of iterations
+    numReplicates = 10; % Number of times to run k-means with different initializations
+    [trainDataDiscretized, C] = kmeans(trainData, numClusters, 'MaxIter', maxIter, 'Replicates', numReplicates);
+    testDataDiscretized = knnsearch(C, testData);
+
+    numStates = 2; % Number of hidden states
+    transMat = [0.7, 0.3; 0.3, 0.7];
+    emissionMat = rand(numStates, numClusters);
+    emissionMat = emissionMat ./ sum(emissionMat, 2);
+    initStateProb = [0.5, 0.5];
+
+    trainSequences = mat2cell(trainDataDiscretized, ones(size(trainDataDiscretized, 1), 1), size(trainDataDiscretized, 2));
+
+    numEpochs = 50;
+    for epoch = 1:numEpochs
+        [transMat, emissionMat, initStateProb] = hmmtrain(trainSequences, transMat, emissionMat, 'MaxIter', 10, 'Verbose', false);
+    end
+
+    predictedLabels = zeros(size(testLabels));
+    for j = 1:length(testLabels)
+        seq = testDataDiscretized(j, :)';
+        states = hmmviterbi(seq, transMat, emissionMat);
+        if mode(states) == 1
+            predictedLabels(j) = 1;
+        else
+            predictedLabels(j) = 0;
+        end
+    end
+
+    accuracies(i) = sum(predictedLabels == testLabels) / length(testLabels);
+    precision = sum((predictedLabels == 1) & (testLabels == 1)) / sum(predictedLabels == 1);
+    recall = sum((predictedLabels == 1) & (testLabels == 1)) / sum(testLabels == 1);
+    f1_score = 2 * (precision * recall) / (precision + recall);
+
+    if isnan(precision)
+        precision = 0;
+    end
+
+    if isnan(f1_score)
+        f1_score = 0;
+    end
+
+    precisions(i) = precision;
+    recalls(i) = recall;
+    f1scores(i) = f1_score;
+
+    fprintf('Fold %d Results:\n', i);
+    fprintf('Accuracy: %.2f%%\n', accuracies(i) * 100);
+    fprintf('Precision: %.2f\n', precisions(i));
+    fprintf('Recall: %.2f\n', recalls(i));
+    fprintf('F1-Score: %.2f\n', f1scores(i));
+    fprintf('\n');
+end
+
+fprintf('Average Accuracy: %.2f%%\n', mean(accuracies) * 100);
+fprintf('Average Precision: %.2f\n', mean(precisions));
+fprintf('Average Recall: %.2f\n', mean(recalls));
+fprintf('Average F1-Score: %.2f\n', mean(f1scores));
